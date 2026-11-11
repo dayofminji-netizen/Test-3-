@@ -1,778 +1,598 @@
 /* =========================================================
- * What's your favorite subject? · 듣고 따라 말하기 웹 앱
- * - 음성 출력: Web Speech API (SpeechSynthesis)
- * - 단어 클릭: 단어 발음 + 뜻 풍선(popup)
- * - 이미지: images/ 폴더의 Canva 이미지 (없으면 이모지)
- * - 내 소개 만들기: 소개 3개(좋아하는 과목 + 잘하는 것) + 친구의 반응
- * - 소개 연습: 대화를 줄마다 말하기 + 역할극(A/B) 채점
- * - 따라 말하기 채점: Web Speech API (SpeechRecognition)
+ * What are you going to do? · 앱 로직
+ * 1) 발음 채점 (Node 테스트 가능: module.exports)
+ * 2) 화면(활동 카드 초급·중급 / 연습하기)
  * ========================================================= */
 
-/* ---------- 음성 합성 (TTS) ---------- */
-const synth = window.speechSynthesis;
-let enVoice = null;
-let speakRate = 0.85;
+/* ================= 1) 발음 채점 ================= */
+const CONTRACTIONS = {
+  "i'm": "i am", "im": "i am", "i'll": "i will", "i've": "i have", "i'd": "i would",
+  "you're": "you are", "we're": "we are", "they're": "they are", "he's": "he is", "she's": "she is",
+  "it's": "it is", "that's": "that is", "what's": "what is", "let's": "let us",
+  "don't": "do not", "doesn't": "does not", "didn't": "did not", "can't": "can not", "cannot": "can not",
+  "won't": "will not", "isn't": "is not", "aren't": "are not", "gonna": "going to", "wanna": "want to"
+};
+const HOMOPHONES = { too: "to", two: "to", four: "for", fore: "for", an: "a", hi: "high", bye: "by", eye: "i", ice: "i" };
+const SMALL_WORDS = new Set(["i", "am", "a", "an", "the", "to", "my", "at", "on", "in", "with", "for", "of", "and", "by", "is", "are"]);
 
-function pickVoice() {
-  const voices = synth.getVoices();
-  enVoice =
-    voices.find(v => /en[-_]US/i.test(v.lang)) ||
-    voices.find(v => /^en/i.test(v.lang)) ||
-    null;
-  const status = document.querySelector(".toolbar #voice-status");
-  if (status) {
-    status.textContent = enVoice ? `음성: ${enVoice.name}` : "영어 음성을 찾는 중...";
-  }
-}
-pickVoice();
-if (synth.onvoiceschanged !== undefined) synth.onvoiceschanged = pickVoice;
-
-function speak(text, rate, onStart, onEnd) {
-  if (!synth) return;
-  synth.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = "en-US";
-  u.rate = rate || speakRate;
-  u.pitch = 1.05;
-  if (enVoice) u.voice = enVoice;
-  if (onStart) u.onstart = onStart;
-  if (onEnd) u.onend = onEnd;
-  synth.speak(u);
-}
-
-/* ---------- 단어 뜻 풍선(popup) ---------- */
-const popup = document.createElement("div");
-popup.className = "word-popup hidden";
-popup.innerHTML = `
-  <div class="wp-word"></div>
-  <div class="wp-meaning"></div>
-  <button class="wp-listen">단어 다시 듣기</button>`;
-document.body.appendChild(popup);
-
-popup.querySelector(".wp-listen").addEventListener("click", e => {
-  e.stopPropagation();
-  if (popup.dataset.word) speak(popup.dataset.word, 0.8);
-});
-
-function showWordPopup(wordEl, rawWord) {
-  const key = wordKey(rawWord);
-  const plain = rawWord.replace(/[.,!?]+$/, "");
-  const meaning = WORD_MEANINGS[key] || WORD_MEANINGS[plain] || "(뜻 정보 없음)";
-  popup.dataset.word = key || rawWord;
-  popup.querySelector(".wp-word").textContent = rawWord.replace(/[.,!?]+$/, "");
-  popup.querySelector(".wp-meaning").textContent = meaning;
-
-  popup.classList.remove("hidden");
-  const r = wordEl.getBoundingClientRect();
-  const pw = popup.offsetWidth;
-  let left = r.left + r.width / 2 - pw / 2 + window.scrollX;
-  left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
-  let top = r.bottom + 8 + window.scrollY;
-  popup.style.left = left + "px";
-  popup.style.top = top + "px";
-
-  speak(key || rawWord, 0.8);
-}
-
-function hidePopup() { popup.classList.add("hidden"); }
-document.addEventListener("click", e => {
-  if (!popup.contains(e.target) && !e.target.classList.contains("word")) hidePopup();
-});
-
-/* ---------- 클릭 가능한 단어로 문장 만들기 ---------- */
-function buildWords(sentence) {
-  const frag = document.createDocumentFragment();
-  sentence.split(/\s+/).forEach((w, i) => {
-    if (i > 0) frag.appendChild(document.createTextNode(" "));
-    const span = document.createElement("span");
-    span.className = "word";
-    span.textContent = w;
-    span.addEventListener("click", e => {
-      e.stopPropagation();
-      showWordPopup(span, w);
+/* 문장 → 비교용 낱말들 */
+function normWords(text) {
+  let s = String(text || "").toLowerCase().replace(/[’‘`]/g, "'").replace(/-/g, " ").replace(/[^a-z0-9' ]+/g, " ");
+  let out = [];
+  s.split(/\s+/).filter(Boolean).forEach(w => {
+    const exp = CONTRACTIONS[w] || w;
+    exp.split(" ").forEach(x => {
+      x = x.replace(/'s$/, "").replace(/'/g, "");
+      if (!x) return;
+      out.push(HOMOPHONES[x] || x);
     });
-    frag.appendChild(span);
   });
-  return frag;
-}
-
-/* ---------- Canva 이미지 ----------
- * 각 문장 데이터의 img 경로(images/*.png)에 Canva에서 만든 이미지를 넣으면 카드에 나타나요.
- * 이미지 파일이 없으면 자동으로 이모지 타일로 바뀌어요. */
-function makeVisual(item) {
-  const em = document.createElement("div");
-  em.className = "emoji";
-  em.textContent = item.emoji;
-  if (!item.img) return em;
-  const img = document.createElement("img");
-  img.className = "photo";
-  img.loading = "lazy";
-  img.alt = item.en;
-  img.src = item.img;
-  img.addEventListener("error", () => img.replaceWith(em));
-  return img;
-}
-
-/* ---------- 카드 만들기 ---------- */
-function makeCard(item, opts) {
-  opts = opts || {};
-  const div = document.createElement("div");
-  div.className = "card" + (opts.tone != null ? " tone-" + opts.tone : "");
-
-  function speakSentence() {
-    speak(item.en, null,
-      () => div.classList.add("speaking"),
-      () => div.classList.remove("speaking"));
-  }
-
-  // 윗줄: 태그 + 듣기
-  const top = document.createElement("div");
-  top.className = "card-top";
-  const tag = document.createElement("span");
-  tag.className = "card-tag";
-  if (opts.index != null) tag.textContent = "CARD " + opts.index;
-  const listenAll = document.createElement("button");
-  listenAll.className = "listen-all";
-  listenAll.textContent = "듣기 ▶";
-  listenAll.addEventListener("click", e => { e.stopPropagation(); speakSentence(); });
-  top.append(tag, listenAll);
-
-  const visual = makeVisual(item);
-
-  // 안쪽 문장 박스: 문장 + 한글 + 스피커
-  const box = document.createElement("div");
-  box.className = "sentence-box";
-  const txt = document.createElement("div");
-  txt.className = "sentence-text";
-  const en = document.createElement("div");
-  en.className = "en";
-  en.appendChild(buildWords(item.en));
-  const ko = document.createElement("div");
-  ko.className = "ko";
-  ko.textContent = item.ko;
-  txt.append(en, ko);
-  const speakBtn = document.createElement("button");
-  speakBtn.className = "speak-btn";
-  speakBtn.setAttribute("aria-label", "문장 듣기");
-  speakBtn.textContent = "🔊";
-  speakBtn.addEventListener("click", e => { e.stopPropagation(); speakSentence(); });
-  box.append(txt, speakBtn);
-
-  div.append(top, visual, box);
-  return div;
-}
-
-function renderGrid(id, list, opts) {
-  opts = opts || {};
-  const grid = document.getElementById(id);
-  grid.innerHTML = "";
-  list.forEach((item, i) => {
-    const cardOpts = {};
-    if (opts.tones) { cardOpts.tone = i % 6; if (!opts.noIndex) cardOpts.index = i + 1; }
-    grid.appendChild(makeCard(item, cardOpts));
-  });
-}
-
-/* ---------- 난이도(초급/중급/고급) + 활동 종류 ---------- */
-let currentLevel = "beginner";
-let currentCategory = "all";
-function currentSuggestions() { return SUGGESTION_LEVELS[currentLevel]; }
-
-function renderSuggestions() {
-  const lvl = currentSuggestions();
-  const view = [];
-  lvl.forEach((item, i) => {
-    if (currentCategory === "all" || SUGGESTION_CATEGORIES[i] === currentCategory) {
-      view.push(item);
+  // 한 글자씩 들린 말 붙이기: "p c" → "pc" (a, i 는 낱말이므로 제외)
+  const joined = [];
+  for (let i = 0; i < out.length;) {
+    if (out[i].length === 1 && out[i] !== "a" && out[i] !== "i") {
+      let j = i, buf = "";
+      while (j < out.length && out[j].length === 1 && out[j] !== "a" && out[j] !== "i") buf += out[j++];
+      if (j - i >= 2) { joined.push(buf); i = j; continue; }
     }
-  });
-  renderGrid("suggestion-grid", view, { tones: true });
-}
-
-document.querySelectorAll(".level-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".level-btn").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    currentLevel = btn.dataset.level;
-    synth.cancel();
-    hidePopup();
-    renderSuggestions();
-  });
-});
-
-document.querySelectorAll(".cat-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".cat-btn").forEach(b => b.classList.remove("active"));
-    btn.classList.add("active");
-    currentCategory = btn.dataset.cat;
-    synth.cancel();
-    hidePopup();
-    renderSuggestions();
-  });
-});
-
-/* ===========================================================
- * 🎒 내 소개 만들기 (소개 3개: 좋아하는 과목 1 + 잘하는 것 1)  +  친구의 반응 1
- * =========================================================== */
-const SET_COUNT = 3;
-let mySets = [];        // [{ subject, good }] (영어 문구 en 으로 저장)
-let myReaction = REACTIONS[1].en;
-let curSet = 0;
-let stats = {};         // 문장별 정확도 기록
-
-try {
-  const saved = JSON.parse(localStorage.getItem("subject_sets") || "null");
-  if (saved && Array.isArray(saved.sets)) {
-    mySets = saved.sets;
-    if (saved.reaction) myReaction = saved.reaction;
+    joined.push(out[i++]);
   }
-} catch (e) {}
-while (mySets.length < SET_COUNT) mySets.push({ subject: null, good: null });
-try { stats = JSON.parse(localStorage.getItem("subject_stats") || "{}") || {}; } catch (e) {}
-
-function persist() {
-  try {
-    localStorage.setItem("subject_sets", JSON.stringify({ sets: mySets, reaction: myReaction }));
-    localStorage.setItem("subject_stats", JSON.stringify(stats));
-  } catch (e) {}
-}
-const findSubject  = en => SUBJECTS.find(x => x.en === en) || null;
-const findGood     = en => GOOD_ATS.find(x => x.en === en) || null;
-const findReaction = en => REACTIONS.find(x => x.en === en) || REACTIONS[1];
-function setComplete(s) { return !!(findSubject(s.subject) && findGood(s.good)); }
-function completeCount() { return mySets.filter(setComplete).length; }
-
-const subjectLine = sb => ({ en: `My favorite subject is ${sb.en}.`, ko: `내가 가장 좋아하는 과목은 ${iya(sb.ko)}.` });
-const goodLine    = g  => ({ en: `I'm good at ${g.en}.`, ko: `나는 ${eulReul(g.ko)} 잘해.` });
-
-/* 소개 → 대화 줄 (A: 묻는 친구 · B: 나) */
-function setLines(s) {
-  const sb = findSubject(s.subject), g = findGood(s.good), r = findReaction(myReaction);
-  return [
-    { who: "A", en: QUESTION.en, ko: QUESTION.ko },
-    Object.assign({ who: "B" }, subjectLine(sb)),
-    Object.assign({ who: "B" }, goodLine(g)),
-    { who: "A", en: r.en, ko: r.ko },
-  ];
+  return joined;
 }
 
-function makeChip(text, cls, isOn, onClick) {
-  const c = document.createElement("button");
-  c.className = "chip " + cls + (isOn ? " on" : "");
-  c.textContent = text;
-  c.addEventListener("click", onClick);
-  return c;
-}
-function setBlank(id, en) {
-  const el = document.getElementById(id);
-  el.classList.toggle("filled", !!en);
-  if (en) { el.innerHTML = ""; el.appendChild(buildWords(en)); }
-  else el.textContent = "________";
-}
-function updateSetBadge() {
-  const c = document.getElementById("set-count");
-  if (c) c.textContent = `${completeCount()}/${SET_COUNT}`;
-  document.querySelectorAll("#set-tabs .set-tab").forEach((b, i) => {
-    b.classList.toggle("active", i === curSet);
-    b.classList.toggle("done", setComplete(mySets[i]));
-    const sb = findSubject(mySets[i].subject), g = findGood(mySets[i].good);
-    b.textContent = `소개 ${i + 1} ${sb ? sb.emoji : ""}${g ? g.emoji : ""}${setComplete(mySets[i]) ? " ✓" : ""}`;
-  });
-}
-
-function renderBuilder() {
-  const s = mySets[curSet];
-  const sbWrap = document.getElementById("build-subjects");
-  const goodRow = document.getElementById("build-good");
-  const reactRow = document.getElementById("build-reaction");
-  sbWrap.innerHTML = ""; goodRow.innerHTML = ""; reactRow.innerHTML = "";
-
-  BUILD_CATS.forEach(cat => {
-    const items = SUBJECTS.filter(a => SUBJECT_CAT[a.key] === cat.key);
-    const title = document.createElement("div");
-    title.className = "chip-group-title";
-    title.textContent = cat.label;
-    const row = document.createElement("div");
-    row.className = "chip-row wrap";
-    items.forEach(a => {
-      row.appendChild(makeChip(`${a.emoji} ${a.en} · ${a.ko}`, "act", s.subject === a.en, () => {
-        s.subject = a.en; persist(); renderBuilder(); updateSetPreview(true);
-      }));
-    });
-    sbWrap.append(title, row);
-  });
-  const usedElsewhere = new Set(mySets.filter((x, i) => i !== curSet).map(x => x.good).filter(Boolean));
-  GOOD_ATS.forEach(g => {
-    const chip = makeChip(`${g.emoji} ${g.en} · ${g.ko}`, "place", s.good === g.en, () => {
-      s.good = g.en; persist(); renderBuilder(); updateSetPreview(true);
-    });
-    if (usedElsewhere.has(g.en)) { chip.classList.add("used"); chip.title = "다른 소개에서 이미 골랐어요"; }
-    goodRow.appendChild(chip);
-  });
-  REACTIONS.forEach(r => {
-    reactRow.appendChild(makeChip(`${r.emoji} ${r.en}`, "when", myReaction === r.en, () => {
-      myReaction = r.en; persist(); renderBuilder(); updateSetPreview(); speak(r.en);
-    }));
-  });
-  updateSetBadge();
-}
-
-let lastSetSpoken = "";
-function updateSetPreview(autoSpeak) {
-  const s = mySets[curSet];
-  const sb = findSubject(s.subject), g = findGood(s.good), r = findReaction(myReaction);
-  setBlank("set-subject", sb && sb.en);
-  setBlank("set-good", g && g.en);
-  document.getElementById("set-subject-ko").textContent = `내가 가장 좋아하는 과목은 ${sb ? iya(sb.ko) : "________(이)야"}.`;
-  document.getElementById("set-good-ko").textContent = `나는 ${g ? eulReul(g.ko) : "________을(를)"} 잘해.`;
-  const q = document.getElementById("set-question");
-  q.innerHTML = ""; q.appendChild(buildWords(QUESTION.en));
-  const rl = document.getElementById("set-reaction-line");
-  rl.innerHTML = ""; rl.appendChild(buildWords(r.en));
-  document.getElementById("set-reaction-ko").textContent = r.ko;
-
-  const status = document.getElementById("set-status");
-  const complete = setComplete(s);
-  status.className = "dlg-status" + (complete ? " ok" : "");
-  if (!sb && !g) status.textContent = `소개 ${curSet + 1} · 1️⃣ 좋아하는 과목을 골라보세요 👇`;
-  else if (!sb) status.textContent = `소개 ${curSet + 1} · 1️⃣ 좋아하는 📚 과목을 골라요 👇`;
-  else if (!g) status.textContent = `소개 ${curSet + 1} · 2️⃣ 내가 ⭐ 잘하는 것을 골라요 👇`;
-  else status.textContent = `✅ 소개 ${curSet + 1} 완성! ${completeCount() < SET_COUNT ? "다음 소개도 만들어 보세요." : "세 소개 모두 완성! 📝 워크시트에 적고 🎤 연습으로 가요."}`;
-  renderSheetSummary();
-  document.getElementById("set-listen").disabled = !complete;
-  updateSetBadge();
-  // 자동 읽기는 사용자가 칩을 눌러 고른 직후에만
-  if (complete && autoSpeak) {
-    const en = setLines(s).map(l => l.en).join(" ");
-    if (en !== lastSetSpoken) { lastSetSpoken = en; speak(en); }
-  } else if (!complete) lastSetSpoken = "";
-}
-
-document.querySelectorAll("#set-tabs .set-tab").forEach(btn => {
-  btn.addEventListener("click", () => {
-    curSet = +btn.dataset.set; synth.cancel(); lastSetSpoken = "";
-    renderBuilder(); updateSetPreview();
-  });
-});
-document.getElementById("set-speak-question").addEventListener("click", () => speak(QUESTION.en));
-document.getElementById("set-speak-subject").addEventListener("click", () => {
-  const sb = findSubject(mySets[curSet].subject); if (sb) speak(subjectLine(sb).en);
-});
-document.getElementById("set-speak-good").addEventListener("click", () => {
-  const g = findGood(mySets[curSet].good); if (g) speak(goodLine(g).en);
-});
-document.getElementById("set-speak-reaction").addEventListener("click", () => speak(findReaction(myReaction).en));
-document.getElementById("set-listen").addEventListener("click", () => {
-  const s = mySets[curSet];
-  if (setComplete(s)) speak(setLines(s).map(l => l.en).join(" "));
-});
-function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
-document.getElementById("set-random").addEventListener("click", () => {
-  const s = mySets[curSet];
-  const used = new Set(mySets.filter((x, i) => i !== curSet).map(x => x.good));
-  const pool = GOOD_ATS.filter(g => !used.has(g.en));
-  s.subject = pick(SUBJECTS).en;
-  s.good = pick(pool.length ? pool : GOOD_ATS).en;
-  persist(); renderBuilder(); updateSetPreview(true);
-});
-document.getElementById("set-clear").addEventListener("click", () => {
-  mySets[curSet] = { subject: null, good: null };
-  synth.cancel(); persist(); renderBuilder(); updateSetPreview();
-});
-
-
-/* ---- 음성 인식 (정확도 측정) ---- */
-const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-const srSupported = !!SR;
-let rec = srSupported ? new SR() : null;
-if (rec) { rec.lang = "en-US"; rec.interimResults = false; rec.maxAlternatives = 5; }
-let recBusy = false;
-
-function normalize(s) {
-  return s.toLowerCase().replace(/[^a-z\s']/g, "").replace(/\s+/g, " ").trim();
-}
 function levenshtein(a, b) {
   const m = a.length, n = b.length;
-  const d = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
-  for (let j = 0; j <= n; j++) d[0][j] = j;
-  for (let i = 1; i <= m; i++)
+  let prev = Array.from({ length: n + 1 }, (_, j) => j);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
     for (let j = 1; j <= n; j++)
-      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-  return d[m][n];
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[n];
 }
-function wordsClose(a, b) {
-  if (a === b) return true;
-  if (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a))) return true;
-  return Math.abs(a.length - b.length) <= 1 && levenshtein(a, b) <= 1;
+/* 자음만 비슷한 소리로 통일 (모음은 그대로 → kite ≠ cat) */
+function soundKey(w) {
+  return w.replace(/ph/g, "f").replace(/th/g, "s").replace(/ck/g, "k").replace(/q/g, "k").replace(/x/g, "ks")
+    .replace(/c/g, "k").replace(/r/g, "l").replace(/f/g, "p").replace(/v/g, "b").replace(/z/g, "s")
+    .replace(/(.)\1+/g, "$1");
 }
-const STOPWORDS = new Set(["a", "an", "the", "to", "of", "on", "in", "at", "for", "but", "i", "i'm", "i'll"]);
-function scoreMatch(target, heard) {
-  const t = normalize(target).split(" ").filter(Boolean);
-  const h = normalize(heard).split(" ").filter(Boolean);
-  let content = t.filter(w => !STOPWORDS.has(w));
-  if (!content.length) content = t;
-  let hit = 0;
-  content.forEach(w => { if (h.some(x => wordsClose(x, w))) hit++; });
-  let score = hit / content.length;
-  if (score >= 0.5) score = Math.min(1, score + 0.12);
-  return score;
+/* 단어 점수: 같음 1 · 철자 1글자 차이 0.85 · 소리 비슷 0.7 · 비슷한 편 0.5 · 그 외 0 */
+function wordScore(t, h) {
+  if (t === h) return 1;
+  const minLen = Math.min(t.length, h.length);
+  if (minLen >= 3 && levenshtein(t, h) === 1) return 0.85;
+  if (minLen >= 2 && soundKey(t) === soundKey(h)) return 0.7;
+  if (minLen >= 3 && (t.startsWith(h) || h.startsWith(t))) return 0.5;
+  if (minLen >= 5 && levenshtein(t, h) <= 2) return 0.5;
+  if (minLen >= 4 && levenshtein(soundKey(t), soundKey(h)) <= 1) return 0.5;
+  return 0;
 }
-function practiceAttempt(target, cb) {
-  if (!rec || recBusy) { cb.onend && cb.onend(); return; }
-  recBusy = true;
-  let score = 0, heard = "", errCode = null;
-  rec.onresult = e => {
-    const alts = e.results[0];
-    for (let i = 0; i < alts.length; i++) {
-      const s = scoreMatch(target, alts[i].transcript);
-      if (s > score) { score = s; heard = alts[i].transcript; }
+
+/* 목표 문장 → 화면 단어(칩) + 비교 단어(가중치) */
+function targetTokens(sentence) {
+  const display = String(sentence).split(/\s+/).filter(Boolean);
+  const tokens = [];
+  display.forEach((dw, di) => {
+    const clean = dw.replace(/[^A-Za-z0-9'’-]/g, "");
+    const proper = di > 0 && /^[A-Z]/.test(clean) && !/^I('|’|$)/.test(clean);
+    normWords(clean).forEach(w => {
+      const weight = SMALL_WORDS.has(w) ? 0.3 : proper ? 0.6 : 1;
+      tokens.push({ w, weight, di });
+    });
+  });
+  return { display, tokens };
+}
+
+/* 단어 순서대로 동적 계획법 정렬 */
+function scoreOne(sentence, heardText) {
+  const { display, tokens } = targetTokens(sentence);
+  const heard = normWords(heardText);
+  const n = tokens.length, m = heard.length;
+  const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+  const sim = Array.from({ length: n }, (_, i) => heard.map(h => wordScore(tokens[i].w, h)));
+  for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++) {
+    let best = Math.max(dp[i - 1][j], dp[i][j - 1]);
+    const s = sim[i - 1][j - 1];
+    if (s > 0) best = Math.max(best, dp[i - 1][j - 1] + tokens[i - 1].weight * s);
+    dp[i][j] = best;
+  }
+  // 되짚기
+  const got = new Array(n).fill(0);
+  let matched = 0, i = n, j = m;
+  while (i > 0 && j > 0) {
+    const s = sim[i - 1][j - 1];
+    if (s > 0 && Math.abs(dp[i][j] - (dp[i - 1][j - 1] + tokens[i - 1].weight * s)) < 1e-9) {
+      got[i - 1] = s; matched++; i--; j--;
+    } else if (Math.abs(dp[i][j] - dp[i - 1][j]) < 1e-9) i--;
+    else j--;
+  }
+  const total = tokens.reduce((a, t) => a + t.weight, 0) || 1;
+  const extras = m - matched;
+  const penalty = Math.min(10, extras * 3);
+  const score = Math.max(0, Math.min(100, Math.round(100 * dp[n][m] / total - penalty)));
+  // 화면 단어별 상태 (I'm 은 한 칩)
+  const chips = display.map((d, di) => {
+    const ts = tokens.map((t, k) => ({ t, s: got[k] })).filter(x => x.t.di === di);
+    let status = "ok";
+    if (ts.length) {
+      if (ts.every(x => x.s === 1)) status = "ok";
+      else if (ts.every(x => x.s === 0)) status = "miss";
+      else status = "near";
     }
+    return { text: d, status };
+  });
+  return { score, chips, heard: heardText, extras };
+}
+
+/* 후보(최대 5개) 중 최고 점수 */
+function scoreSpeech(sentence, alternatives) {
+  const alts = (alternatives || []).filter(a => a && a.trim()).slice(0, 5);
+  if (!alts.length) return null;
+  return alts.map(a => scoreOne(sentence, a)).reduce((b, r) => (r.score > b.score ? r : b));
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { normWords, wordScore, soundKey, scoreOne, scoreSpeech, targetTokens };
+}
+
+/* ================= 2) 화면 ================= */
+if (typeof window !== "undefined" && typeof document !== "undefined") (function () {
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  const actById = id => ACTIVITIES.find(a => a.id === id);
+  const catById = id => CATS.find(c => c.id === id);
+  const qById = id => QUESTIONS.find(q => q.id === id);
+
+  /* ----- 저장 ----- */
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* 무시 */ } }
   };
-  rec.onerror = ev => { errCode = ev.error; };
-  rec.onend = () => {
-    recBusy = false;
-    if (errCode && score === 0) cb.onerror && cb.onerror(errCode);
-    else cb.onresult && cb.onresult(Math.round(score * 100), heard);
-    cb.onend && cb.onend();
-  };
-  try { rec.start(); } catch (e) { recBusy = false; cb.onend && cb.onend(); }
-}
+  let plans = store.get("wayg-plans", {});     // { q1: { id, level } }
+  let stats = store.get("wayg-stats", {});     // { "I'm going to ...": { count, best, sum, last } }
+  Object.keys(plans).forEach(k => { if (!qById(k) || !actById(plans[k].id)) delete plans[k]; });
+  const savePlans = () => store.set("wayg-plans", plans);
+  const saveStats = () => store.set("wayg-stats", stats);
+  const recordings = {};                        // { q1: blobURL } (새로고침하면 사라짐)
 
-/* ---- 말한 뒤 콜백 (음성이 없어도 넘어가도록 안전장치) ---- */
-function speakThen(text, cb) {
-  let done = false;
-  const finish = () => { if (!done) { done = true; cb(); } };
-  const timer = setTimeout(finish, Math.min(9000, 1500 + text.length * 90));
-  speak(text, null, null, () => { clearTimeout(timer); finish(); });
-}
+  let currentQ = "q1";
+  const filters = { basic: "all", mid: "all" };
 
-function statsText(en, last) {
-  const s = stats[en] || { attempts: 0, best: 0 };
-  return `정확도 <b class="acc">${last != null ? last + "%" : "--"}</b>` +
-    ` · 최고 <b class="best">${s.best ? s.best + "%" : "--"}</b>` +
-    ` · <b>${s.attempts}</b>회`;
-}
-function recordScore(en, score) {
-  const s = stats[en] || { attempts: 0, best: 0 };
-  s.attempts++; s.best = Math.max(s.best, score); stats[en] = s; persist();
-}
-function feedbackHtml(score, heard) {
-  const h = `<span class="heard">내 발음: ${heard || "(못 들었어요)"}</span>`;
-  if (score >= 75) return ["good", `⭐ 훌륭해요! ${score}% ${h}`];
-  if (score >= 45) return ["good", `👍 좋아요! 한 번 더! ${score}% ${h}`];
-  return ["bad", `🔁 다시 또박또박! ${score}% ${h}`];
-}
+  /* ----- 음성 합성 ----- */
+  let voice = null;
+  function pickVoice() {
+    if (!("speechSynthesis" in window)) return;
+    const vs = speechSynthesis.getVoices().filter(v => /^en(-|_)/i.test(v.lang));
+    voice = vs.find(v => /en-US/i.test(v.lang) && /Google|Samantha|Female|Zira|Jenny|Aria/i.test(v.name)) ||
+            vs.find(v => /en-US/i.test(v.lang)) || vs[0] || null;
+  }
+  if ("speechSynthesis" in window) { pickVoice(); speechSynthesis.onvoiceschanged = pickVoice; }
+  function speakSeq(texts, onDone) {
+    if (!("speechSynthesis" in window)) { onDone && onDone(); return; }
+    speechSynthesis.cancel();
+    const list = texts.filter(Boolean);
+    let i = 0;
+    const next = () => {
+      if (i >= list.length) { onDone && onDone(); return; }
+      const u = new SpeechSynthesisUtterance(list[i++]);
+      u.lang = "en-US"; u.rate = 0.85; if (voice) u.voice = voice;
+      u.onend = next; u.onerror = next;
+      speechSynthesis.speak(u);
+    };
+    next();
+  }
+  const speak = t => speakSeq([t]);
 
-/* 한 문장 연습 줄: [🔊] 문장/뜻 [🎙️ 말하기] 점수 → 피드백 */
-function makeSpeakRow(en, ko, who) {
-  const row = document.createElement("div");
-  row.className = "prow" + (who ? " who-" + who.toLowerCase() : "");
+  /* ----- 단어 뜻 풍선 ----- */
+  const popup = $("#word-popup");
+  function wordsHtml(sentence) {
+    return String(sentence).split(/\s+/).filter(Boolean).map(w => {
+      const key = w.replace(/[^A-Za-z']/g, "").toLowerCase();
+      return WORDS[key] ? `<span class="w" tabindex="0" data-w="${esc(key)}">${esc(w)}</span>` : esc(w);
+    }).join(" ");
+  }
+  function showPopup(target) {
+    const key = target.dataset.w;
+    popup.innerHTML = `<b>${esc(target.textContent.replace(/[.?!,]/g, ""))}</b> ${esc(WORDS[key] || "")}`;
+    popup.classList.remove("hidden");
+    const r = target.getBoundingClientRect();
+    const pw = popup.offsetWidth, ph = popup.offsetHeight;
+    const left = Math.max(8, Math.min(r.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - pw - 8));
+    popup.style.left = left + "px";
+    popup.style.top = (r.top + window.scrollY - ph - 10) + "px";
+    speak(target.textContent.replace(/[.?!,]/g, ""));
+  }
+  document.addEventListener("click", e => {
+    const w = e.target.closest(".w");
+    if (w) { showPopup(w); e.stopPropagation(); return; }
+    if (!e.target.closest("#word-popup")) popup.classList.add("hidden");
+  });
+  document.addEventListener("keydown", e => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.classList && e.target.classList.contains("w")) { e.preventDefault(); showPopup(e.target); }
+    if (e.key === "Escape") popup.classList.add("hidden");
+  });
+  window.addEventListener("scroll", () => popup.classList.add("hidden"), { passive: true });
 
-  const speakBtn = document.createElement("button");
-  speakBtn.className = "speak-btn small";
-  speakBtn.setAttribute("aria-label", "듣기");
-  speakBtn.textContent = "🔊";
-  speakBtn.addEventListener("click", () => speak(en));
+  /* ----- 그림 (없으면 이모지 타일) ----- */
+  function visual(a, cls) {
+    const box = el("div", cls);
+    const img = new Image();
+    img.alt = a.en; img.loading = "lazy"; img.src = a.img;
+    img.onerror = () => { box.innerHTML = ""; box.appendChild(el("div", "emoji-tile", a.emoji)); };
+    box.appendChild(img);
+    return box;
+  }
 
-  const txt = document.createElement("div");
-  txt.className = "prow-text";
-  if (who) { const w = document.createElement("span"); w.className = "prow-who"; w.textContent = who; txt.appendChild(w); }
-  const enEl = document.createElement("div"); enEl.className = "en"; enEl.appendChild(buildWords(en));
-  const koEl = document.createElement("div"); koEl.className = "ko"; koEl.textContent = ko;
-  txt.append(enEl, koEl);
+  /* ----- 탭 ----- */
+  function switchTab(name) {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === "tab-" + name));
+    popup.classList.add("hidden");
+    if (name === "practice") renderPractice(); else renderCardTab(name);
+    window.scrollTo({ top: 0 });
+  }
+  document.querySelectorAll(".tab-btn").forEach(b => b.addEventListener("click", () => switchTab(b.dataset.tab)));
 
-  const mic = document.createElement("button");
-  mic.className = "mic-btn";
-  mic.innerHTML = '<span class="mic-ico">🎙️</span><span class="mic-txt">말하기</span>';
-  const score = document.createElement("div");
-  score.className = "pstats";
-  score.innerHTML = statsText(en, null);
-  const fb = document.createElement("div");
-  fb.className = "mic-feedback";
+  function planCount() { return Object.keys(plans).length; }
+  function updateBadge() { $("#plan-count").textContent = planCount() + "/5"; }
 
-  if (!srSupported) { mic.disabled = true; mic.title = "이 브라우저는 음성 인식을 지원하지 않아요 (Chrome 권장)"; }
+  /* ===== 활동 카드 탭 ===== */
+  function buildCardTab(level) {
+    const sec = $("#tab-" + level);
+    sec.innerHTML = `
+      <div class="block">
+        <h2>1️⃣ 질문을 골라요</h2>
+        <div class="q-row"></div>
+        <div class="chat"></div>
+        <div class="chat-actions">
+          <button class="btn js-listen">🔊 대화 듣기</button>
+          <button class="btn soft js-next">다음 질문 ▶</button>
+          <button class="btn red js-go">🎤 연습하기로 가기</button>
+        </div>
+        <p class="status" aria-live="polite"></p>
+      </div>
+      <div class="block">
+        <h2>2️⃣ 할 일 고르기 <span class="hint">${level === "mid" ? "중급: 누구와 · 어디서 · 무엇을 하러를 붙인 긴 문장" : "초급: 짧은 문장"}</span></h2>
+        <div class="filters"></div>
+        <div class="card-grid"></div>
+      </div>`;
+    sec.querySelector(".js-listen").addEventListener("click", () => {
+      const q = qById(currentQ), p = plans[currentQ];
+      speakSeq([q.q, p ? answerEn(actById(p.id), p.level) : "I'm going to ..."]);
+    });
+    sec.querySelector(".js-next").addEventListener("click", () => {
+      const i = QUESTIONS.findIndex(q => q.id === currentQ);
+      currentQ = QUESTIONS[(i + 1) % QUESTIONS.length].id;
+      renderCardTab(level);
+      speak(qById(currentQ).q);
+    });
+    sec.querySelector(".js-go").addEventListener("click", () => switchTab("practice"));
+  }
 
-  function attempt(after) {
-    if (recBusy || !srSupported) { after && after(); return; }
-    mic.classList.add("recording");
-    row.classList.add("active");
-    fb.className = "mic-feedback"; fb.textContent = "🔴 듣고 있어요... 또박또박 말해보세요!";
-    practiceAttempt(en, {
-      onresult: (s, heard) => {
-        recordScore(en, s);
-        score.innerHTML = statsText(en, s);
-        const [cls, html] = feedbackHtml(s, heard);
-        fb.className = "mic-feedback " + cls; fb.innerHTML = html;
-      },
-      onerror: err => {
-        fb.className = "mic-feedback bad";
-        fb.textContent = err === "not-allowed" ? "마이크 권한을 허용해 주세요." : "다시 시도해 주세요.";
-      },
-      onend: () => { mic.classList.remove("recording"); row.classList.remove("active"); after && after(); }
+  function renderQRow(level) {
+    const row = $("#tab-" + level + " .q-row");
+    row.innerHTML = "";
+    QUESTIONS.forEach((q, i) => {
+      const p = plans[q.id];
+      const b = el("button", "q-btn" + (q.id === currentQ ? " active" : ""),
+        `<span class="q-num">Q${i + 1}</span><span class="q-emoji">${q.emoji}</span>` +
+        `<span class="q-ko">${q.ko}</span><span class="q-en">${q.en}</span>` +
+        (p ? `<span class="q-done" title="계획 있음">✓${actById(p.id).emoji}</span>` : ""));
+      b.dataset.q = q.id;
+      b.addEventListener("click", () => { currentQ = q.id; renderCardTab(level); speak(q.q); });
+      row.appendChild(b);
     });
   }
-  mic.addEventListener("click", () => attempt());
 
-  const main = document.createElement("div");
-  main.className = "prow-main";
-  main.append(speakBtn, txt, mic, score);
-  row.append(main, fb);
-  row._attempt = attempt;
-  row._who = who;
-  row._en = en;
-  return row;
-}
-
-
-/* ===========================================================
- * 📝 워크시트에 적기
- * =========================================================== */
-function sheetRow(label, en, ko) {
-  const row = document.createElement("div");
-  row.className = "sheet-row" + (en ? "" : " empty");
-  const lab = document.createElement("div"); lab.className = "sheet-label"; lab.textContent = label;
-  const val = document.createElement("div"); val.className = "sheet-val";
-  if (en) {
-    const e = document.createElement("div"); e.className = "en"; e.appendChild(buildWords(en));
-    const k = document.createElement("div"); k.className = "ko"; k.textContent = ko;
-    val.append(e, k);
-  } else val.textContent = "아직 고르지 않았어요";
-  const btn = document.createElement("button");
-  btn.className = "speak-btn small"; btn.textContent = "🔊"; btn.disabled = !en;
-  btn.addEventListener("click", () => en && speak(en));
-  row.append(lab, val, btn);
-  return row;
-}
-function renderSheetSummary() {
-  const box = document.getElementById("sheet-summary");
-  if (!box) return;
-  box.innerHTML = "";
-  box.appendChild(sheetRow("친구에게 묻기", QUESTION.en, QUESTION.ko));
-  mySets.forEach((s, i) => {
-    const sb = findSubject(s.subject), g = findGood(s.good);
-    const a = sb && subjectLine(sb), b = g && goodLine(g);
-    box.appendChild(sheetRow(`좋아하는 과목 ${i + 1}`, a && a.en, a && a.ko));
-    box.appendChild(sheetRow(`잘하는 것 ${i + 1}`, b && b.en, b && b.ko));
-  });
-}
-
-/* ===========================================================
- * 👫 짝 활동 카드 (묻기 → 대답하기)
- * =========================================================== */
-function renderPairCards() {
-  const box = document.getElementById("pair-cards");
-  box.innerHTML = "";
-  const done = mySets.map((s, i) => [s, i]).filter(([s]) => setComplete(s));
-  if (!done.length) {
-    const p = document.createElement("p"); p.className = "practice-empty";
-    p.innerHTML = "아직 만든 소개가 없어요! <b>🎒 내 소개 만들기</b>에서 먼저 만들어요.";
-    box.appendChild(p); return;
+  function renderChat(level) {
+    const q = qById(currentQ), p = plans[currentQ], a = p && actById(p.id);
+    const chat = $("#tab-" + level + " .chat");
+    const ans = a ? (p.level === "mid" ? a.mid.en : a.en) : null;
+    chat.innerHTML = `
+      <div class="bubble-line friend">
+        <div class="who">🙋<small>친구</small></div>
+        <div class="bubble"><div class="say">${wordsHtml(q.q)} <button class="mini js-sq" aria-label="질문 듣기">🔊</button></div>
+          <div class="mean">${q.qKo}</div></div>
+      </div>
+      <div class="bubble-line me">
+        <div class="who">🙆<small>나</small></div>
+        <div class="bubble"><div class="say">${a ? `${wordsHtml("I'm going to")} <span class="filled">${wordsHtml(ans)}</span>.` :
+          `I'm going to <span class="blank">____</span>.`} <button class="mini js-sa" aria-label="대답 듣기">🔊</button></div>
+          <div class="mean">${a ? answerKo(a, p.level) : "나는 ____ 거야."}</div></div>
+      </div>`;
+    chat.querySelector(".js-sq").addEventListener("click", () => speak(q.q));
+    chat.querySelector(".js-sa").addEventListener("click", () => speak(a ? answerEn(a, p.level) : "I'm going to ..."));
+    const status = $("#tab-" + level + " .status");
+    status.textContent = a
+      ? `✅ ${q.ko} 계획: ${a.emoji} ${answerKo(a, p.level)} · 연습하기에 담겼어요 (${planCount()}/5)`
+      : `👇 아래 카드에서 ‘✅ ${q.koWhen} 할래요’를 눌러 대답을 골라요.`;
   }
-  done.forEach(([s, i]) => {
-    const sb = findSubject(s.subject), g = findGood(s.good);
-    const card = document.createElement("div");
-    card.className = "pair-card tone-" + (i % 6);
-    const head = document.createElement("div"); head.className = "pair-head";
-    head.innerHTML = `<span class="card-tag tag-combo">소개 ${i + 1}</span><span class="pair-emoji">${sb.emoji}${g.emoji}</span>`;
-    const ask = document.createElement("div"); ask.className = "pair-line friend";
-    ask.innerHTML = `<div class="pair-who">🙋 묻기 (친구에게 / 친구가 나에게)</div>`;
-    const q = document.createElement("div"); q.className = "pair-en"; q.appendChild(buildWords(QUESTION.en));
-    ask.appendChild(q);
-    const a1 = document.createElement("div"); a1.className = "pair-line me";
-    a1.innerHTML = `<div class="pair-who">😀 나의 대답</div>`;
-    const e1 = document.createElement("div"); e1.className = "pair-en"; e1.appendChild(buildWords(subjectLine(sb).en));
-    const e2 = document.createElement("div"); e2.className = "pair-en"; e2.appendChild(buildWords(goodLine(g).en));
-    a1.append(e1, e2);
-    const memo = document.createElement("div"); memo.className = "pair-line friend";
-    memo.innerHTML = `<div class="pair-who">✍️ 친구의 대답 적기</div>
-      <div class="pair-choice"><span class="pair-ok">이름: ________</span><span class="pair-ok">과목: ________</span><span class="pair-ok">잘하는 것: ________</span></div>`;
-    const tools = document.createElement("div"); tools.className = "ptools";
-    const b1 = document.createElement("button"); b1.className = "btn small primary"; b1.textContent = "🔊 질문 듣기";
-    b1.addEventListener("click", () => speak(QUESTION.en));
-    const b2 = document.createElement("button"); b2.className = "btn small"; b2.textContent = "🔊 대답 듣기";
-    b2.addEventListener("click", () => speak(`${subjectLine(sb).en} ${goodLine(g).en}`));
-    tools.append(b1, b2);
-    card.append(head, ask, a1, memo, tools);
-    box.appendChild(card);
-  });
-}
 
-/* ===========================================================
- * 🎤 컴퓨터와 미리 연습하기 (소개별 대화: 줄마다 말하기 + 역할극)
- * =========================================================== */
-function makeSetCard(s, idx) {
-  const card = document.createElement("div");
-  card.className = "pcard pcard-dialog";
-  const sb = findSubject(s.subject), g = findGood(s.good);
+  function renderFilters(level) {
+    const box = $("#tab-" + level + " .filters");
+    const q = qById(currentQ);
+    const opts = [["all", "전체"], ["book", "📘 교과서 표현"]]
+      .concat(CATS.map(c => [c.id, c.emoji + " " + c.ko]))
+      .concat([["star", `⭐ ${q.ko}에 어울리는 것만`]]);
+    box.innerHTML = "";
+    opts.forEach(([id, label]) => {
+      const b = el("button", "chip" + (filters[level] === id ? " active" : ""), label);
+      b.dataset.filter = id;
+      b.addEventListener("click", () => { filters[level] = id; renderFilters(level); renderGrid(level); });
+      box.appendChild(b);
+    });
+  }
 
-  const top = document.createElement("div");
-  top.className = "card-top";
-  const left = document.createElement("div"); left.className = "ptag-left";
-  const tag = document.createElement("span"); tag.className = "card-tag tag-combo"; tag.textContent = `🎒 소개 ${idx + 1}`;
-  const title = document.createElement("span"); title.className = "pset-title"; title.textContent = `${sb.emoji} ${sb.en} · ${g.emoji} ${g.en}`;
-  left.append(tag, title);
-  top.append(left);
-  card.appendChild(top);
+  function renderGrid(level) {
+    const grid = $("#tab-" + level + " .card-grid");
+    const f = filters[level], q = qById(currentQ);
+    const list = ACTIVITIES.filter(a =>
+      f === "all" ? true : f === "book" ? a.book : f === "star" ? a.when.includes(currentQ) : a.cat === f);
+    grid.innerHTML = "";
+    if (!list.length) { grid.appendChild(el("p", "empty", "카드가 없어요.")); return; }
+    list.forEach(a => {
+      const cat = catById(a.cat);
+      const p = plans[currentQ];
+      const chosen = p && p.id === a.id && p.level === level;
+      const card = el("div", `card c-${a.cat}` + (chosen ? " chosen" : ""));
+      card.dataset.id = a.id;
+      const tags = el("div", "card-tags",
+        `<span class="tag">${cat.emoji} ${cat.ko}</span>` +
+        (a.book ? `<span class="tag book">📘 교과서</span>` : "") +
+        (a.when.includes(currentQ) ? `<span class="tag star">⭐ 추천</span>` : ""));
+      card.appendChild(tags);
+      card.appendChild(visual(a, "visual"));
+      card.appendChild(el("div", "card-body",
+        `<div class="sentence">${wordsHtml(answerEn(a, level))}</div><div class="ko">${answerKo(a, level)}</div>`));
+      const foot = el("div", "card-foot");
+      const sp = el("button", "mini", "🔊"); sp.setAttribute("aria-label", "문장 듣기");
+      sp.addEventListener("click", () => speak(answerEn(a, level)));
+      const ch = el("button", "choose" + (chosen ? " on" : ""), chosen ? `✔ 골랐어요 · 빼기` : `✅ ${q.koWhen} 할래요`);
+      ch.addEventListener("click", () => choose(level, a));
+      foot.appendChild(sp); foot.appendChild(ch);
+      card.appendChild(foot);
+      grid.appendChild(card);
+    });
+  }
 
-  const body = document.createElement("div");
-  const tools = document.createElement("div"); tools.className = "ptools";
-  const roleNote = document.createElement("div"); roleNote.className = "role-note";
-  card.append(body, tools, roleNote);
+  function choose(level, a) {
+    const q = qById(currentQ), p = plans[currentQ];
+    if (p && p.id === a.id && p.level === level) {
+      delete plans[currentQ];
+      savePlans(); delete recordings[currentQ];
+      renderAllAfterPlanChange(level);
+      $("#tab-" + level + " .status").textContent = `↩️ ${q.ko} 계획을 뺐어요. 다른 카드를 골라 봐요.`;
+      return;
+    }
+    plans[currentQ] = { id: a.id, level };
+    savePlans(); delete recordings[currentQ];
+    renderAllAfterPlanChange(level);
+    speakSeq([q.q, answerEn(a, level)]);
+  }
+  function renderAllAfterPlanChange(level) {
+    updateBadge();
+    renderQRow(level); renderChat(level); renderGrid(level);
+  }
 
-  let playing = false;
-  const rows = setLines(s).map(l => makeSpeakRow(l.en, l.ko, l.who));
-  rows.forEach(r => body.appendChild(r));
+  function renderCardTab(level) {
+    renderQRow(level); renderChat(level); renderFilters(level); renderGrid(level);
+  }
 
-  const allBtn = document.createElement("button");
-  allBtn.className = "btn small"; allBtn.textContent = "🔊 전체 듣기";
-  allBtn.addEventListener("click", () => speak(rows.map(r => r._en).join(" ")));
-  const roleA = document.createElement("button");
-  roleA.className = "btn small primary"; roleA.textContent = "🎭 내가 A (묻기)";
-  const roleB = document.createElement("button");
-  roleB.className = "btn small primary"; roleB.textContent = "🎭 내가 B (대답하기)";
-  roleA.addEventListener("click", () => rolePlay("A", [roleA, roleB]));
-  roleB.addEventListener("click", () => rolePlay("B", [roleA, roleB]));
-  tools.append(allBtn, roleA, roleB);
+  /* ===== 연습하기 ===== */
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const canRecord = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
+  const supportMsg = SR ? "🎙️ 말하기를 누르고 문장을 영어로 말해요. 마이크 권한을 허용해 주세요."
+    : canRecord ? "⚠️ 이 브라우저는 음성 인식이 없어 4초 녹음만 돼요. 채점은 Chrome 권장!"
+    : "⚠️ 이 브라우저는 마이크를 쓸 수 없어요. Chrome 권장!";
 
-  function rolePlay(me, btns) {
-    if (playing || recBusy) return;
-    if (!srSupported) { roleNote.textContent = "이 브라우저는 음성 인식을 지원하지 않아요 (Chrome 권장)"; return; }
-    playing = true; btns.forEach(b => b.disabled = true);
-    let i = 0;
-    const step = () => {
-      rows.forEach(r => r.classList.remove("turn"));
-      if (i >= rows.length) {
-        playing = false; btns.forEach(b => b.disabled = false);
-        roleNote.textContent = "🎉 역할극 끝! 잘했어요. 이번엔 다른 역할도 해 볼까요?";
-        return;
-      }
-      const r = rows[i]; i++;
-      r.classList.add("turn");
-      if (r._who === me) {
-        roleNote.textContent = `🎙️ 내 차례! "${r._en}" 라고 말해보세요.`;
-        r._attempt(() => setTimeout(step, 500));
+  function statOf(en) { return stats[en] || { count: 0, best: 0, sum: 0, last: null }; }
+  function statsText(en) {
+    const s = statOf(en);
+    if (!s.count) return "아직 연습 전이에요";
+    return `이번 ${s.last}% · 평균 ${Math.round(s.sum / s.count)}% · 최고 ${s.best}% · ${s.count}회`;
+  }
+  function renderSummary() {
+    let count = 0, sum = 0;
+    Object.values(stats).forEach(s => { count += s.count; sum += s.sum; });
+    $("#sum-count").textContent = count;
+    $("#sum-avg").textContent = count ? Math.round(sum / count) + "%" : "-";
+    const done = QUESTIONS.filter(q => { const p = plans[q.id]; return p && statOf(answerEn(actById(p.id), p.level)).count > 0; }).length;
+    $("#sum-done").textContent = done + "/5";
+    $("#mic-support").textContent = supportMsg;
+  }
+
+  function renderPractice() {
+    renderSummary();
+    const list = $("#plan-list");
+    list.innerHTML = "";
+    QUESTIONS.forEach(q => {
+      const p = plans[q.id], a = p && actById(p.id);
+      const row = el("div", "plan-row" + (a ? " done" : ""));
+      row.dataset.q = q.id;
+      row.appendChild(el("div", "plan-when", `<span class="e">${q.emoji}</span>${q.ko}<span class="en">${q.en}</span>`));
+      const main = el("div", "plan-main");
+      main.innerHTML = `<div class="plan-q">Q. ${wordsHtml(q.q)}</div>` + (a
+        ? `<div class="plan-a">A. ${wordsHtml(answerEn(a, p.level))}</div><div class="ko">${answerKo(a, p.level)}</div>`
+        : `<div class="plan-a empty-a">A. I'm going to ____.</div><div class="ko">🎨 활동 카드에서 골라요</div>`);
+      row.appendChild(main);
+      const side = el("div", "plan-side");
+      if (a) {
+        side.appendChild(visual(a, "thumb"));
+        const btns = el("div", "plan-btns");
+        const sp = el("button", "mini", "🔊"); sp.setAttribute("aria-label", "듣기");
+        sp.addEventListener("click", () => speakSeq([q.q, answerEn(a, p.level)]));
+        const rm = el("button", "mini js-remove", "✕"); rm.setAttribute("aria-label", "빼기");
+        rm.addEventListener("click", () => { delete plans[q.id]; delete recordings[q.id]; savePlans(); updateBadge(); renderPractice(); });
+        btns.appendChild(sp); btns.appendChild(rm);
+        side.appendChild(btns);
+        main.appendChild(speakTool(q, answerEn(a, p.level)));
       } else {
-        roleNote.textContent = `👂 컴퓨터(${r._who})가 말해요. 잘 들어보세요.`;
-        speakThen(r._en, () => setTimeout(step, 400));
+        side.appendChild(el("div", "thumb", `<div class="emoji-tile">❔</div>`));
       }
-    };
-    step();
+      row.appendChild(side);
+      list.appendChild(row);
+    });
   }
-  return card;
-}
 
-function renderPractice() {
-  renderPairCards();
-  const empty = document.getElementById("practice-empty");
-  const list = document.getElementById("practice-list");
-  list.innerHTML = "";
-  const done = mySets.map((s, i) => [s, i]).filter(([s]) => setComplete(s));
-  if (!done.length) { empty.style.display = "block"; return; }
-  empty.style.display = "none";
-  done.forEach(([s, i]) => list.appendChild(makeSetCard(s, i)));
-  if (done.length < SET_COUNT) {
-    const note = document.createElement("p");
-    note.className = "practice-empty";
-    note.innerHTML = `아직 <b>${SET_COUNT - done.length}개</b> 소개가 비어 있어요. <b>🎒 내 소개 만들기</b>에서 마저 만들어 보세요.`;
-    list.appendChild(note);
+  function speakTool(q, en) {
+    const wrap = el("div", "speak-tool-wrap");
+    const tool = el("div", "speak-tool");
+    const rec = el("button", "btn rec js-speak", "🎙️ 말하기");
+    const play = el("button", "btn soft js-play", "▶ 내 목소리");
+    const st = el("span", "stats", statsText(en));
+    play.disabled = !recordings[q.id];
+    if (!SR && !canRecord) { rec.disabled = true; st.textContent = "Chrome 권장 (이 브라우저는 마이크를 쓸 수 없어요)"; }
+    tool.append(rec, play, st);
+    const live = el("div", "live");
+    const result = el("div", "result hidden");
+    wrap.append(tool, live, result);
+
+    play.addEventListener("click", () => {
+      if (!recordings[q.id]) return;
+      const au = new Audio(recordings[q.id]);
+      au.play().catch(() => { live.textContent = "녹음을 재생하지 못했어요."; });
+    });
+
+    let session = null;
+    rec.addEventListener("click", () => {
+      if (session) { session.stop(); return; }
+      session = startAttempt(q, en, {
+        onStart() { rec.classList.add("on"); rec.textContent = "⏹️ 그만"; live.textContent = "👂 듣고 있어요… 문장을 말해 봐요!"; result.classList.add("hidden"); },
+        onInterim(t) { live.textContent = "👂 들리는 말: " + t; },
+        onRecording() { play.disabled = false; },
+        onEnd(alts, err) {
+          session = null;
+          rec.classList.remove("on"); rec.textContent = "🎙️ 말하기";
+          if (err) { live.textContent = err; return; }
+          if (!SR) { live.textContent = "🎧 녹음했어요! ▶ 내 목소리로 들어 봐요. (채점은 Chrome에서)"; return; }
+          const r = scoreSpeech(en, alts);
+          if (!r) { live.textContent = "🤔 잘 안 들렸어요. 마이크 가까이에서 다시 말해 봐요."; return; }
+          live.textContent = "";
+          const s = statOf(en);
+          s.count++; s.sum += r.score; s.best = Math.max(s.best, r.score); s.last = r.score;
+          stats[en] = s; saveStats();
+          st.textContent = statsText(en);
+          showResult(result, r);
+          renderSummary();
+        }
+      });
+    });
+    return wrap;
   }
-}
 
+  function showResult(box, r) {
+    const icon = r.score >= 85 ? "⭐" : r.score >= 60 ? "👍" : "🔁";
+    const msg = r.score >= 85 ? "아주 잘했어요!" : r.score >= 60 ? "좋아요! 조금만 더!" : "다시 해 봐요!";
+    const retry = [];
+    r.chips.forEach(c => {
+      const w = c.text.replace(/[.?!,]/g, "");
+      const small = SMALL_WORDS.has(w.toLowerCase()) && w !== "I";
+      if (c.status !== "ok" && !small && !retry.includes(w)) retry.push(w);
+    });
+    box.innerHTML = `<div class="score">${icon} ${r.score}% <small>${msg}</small></div>
+      <div class="wchips">${r.chips.map(c => `<span class="wchip ${c.status}">${esc(c.text)}</span>`).join("")}</div>
+      <div class="hint">🟩 맞음 · 🟨 비슷함 · 🟥 놓침</div>
+      ${retry.length ? `<div class="retry">🔁 다시 들어 볼 단어: ${retry.map(w => `<button data-say="${esc(w)}">🔊 ${esc(w)}</button>`).join("")}</div>` : ""}
+      <div class="heard">컴퓨터가 들은 말: “${esc(r.heard)}”</div>`;
+    box.querySelectorAll("[data-say]").forEach(b => b.addEventListener("click", () => speak(b.dataset.say)));
+    box.classList.remove("hidden");
+  }
 
-/* ---------- 질문 · 반응 카드 ---------- */
-function renderAnswerGrids() {
-  renderGrid("accept-grid", [QUESTION], { tones: true, noIndex: true });
-  renderGrid("reaction-grid", REACTIONS, { tones: true, noIndex: true });
-  renderSubjectFill();
-  renderGoodFill();
-}
+  /* 음성 인식 + 녹음 동시에 */
+  function startAttempt(q, en, cb) {
+    let recorder = null, stream = null, recog = null, timer = null, ended = false;
+    const alts = [];
+    let finalAlts = null;
+    if ("speechSynthesis" in window) speechSynthesis.cancel();
 
-let fillSubject = null;
-let fillGood = null;
-let lastFillSpoken = "";
+    function stopRecorder() {
+      try { if (recorder && recorder.state !== "inactive") recorder.stop(); } catch (e) { /* 무시 */ }
+    }
+    function finish(err) {
+      if (ended) return; ended = true;
+      clearTimeout(timer);
+      stopRecorder();
+      cb.onEnd(finalAlts || alts, err);
+    }
+    function startRecorder() {
+      if (!canRecord) return Promise.resolve();
+      return navigator.mediaDevices.getUserMedia({ audio: true }).then(s => {
+        stream = s;
+        const chunks = [];
+        recorder = new MediaRecorder(s);
+        recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+        recorder.onstop = () => {
+          stream.getTracks().forEach(t => t.stop());
+          if (chunks.length) {
+            if (recordings[q.id]) URL.revokeObjectURL(recordings[q.id]);
+            recordings[q.id] = URL.createObjectURL(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+            cb.onRecording();
+          }
+        };
+        recorder.start();
+        if (ended) stopRecorder();
+      }).catch(() => { /* 녹음 실패해도 인식은 진행 */ });
+    }
 
-function fillActions(wrap, en) {
-  wrap.innerHTML = "";
-  if (!en) return;
-  const listenBtn = document.createElement("button");
-  listenBtn.className = "btn primary";
-  listenBtn.textContent = "🔊 문장 듣기";
-  listenBtn.addEventListener("click", () => speak(en));
-  wrap.append(listenBtn);
-  if (en !== lastFillSpoken) { lastFillSpoken = en; speak(en); }
-}
+    cb.onStart();
+    if (SR) {
+      recog = new SR();
+      recog.lang = "en-US";
+      recog.interimResults = true;
+      recog.maxAlternatives = 5;
+      recog.continuous = false;
+      recog.onresult = e => {
+        let text = "";
+        for (let i = 0; i < e.results.length; i++) {
+          const res = e.results[i];
+          text += res[0].transcript + " ";
+          if (res.isFinal) {
+            const list = [];
+            for (let k = 0; k < res.length && k < 5; k++) list.push(res[k].transcript);
+            finalAlts = list;
+          }
+        }
+        alts.length = 0; alts.push(text.trim());
+        cb.onInterim(text.trim());
+      };
+      recog.onerror = e => {
+        if (e.error === "not-allowed" || e.error === "service-not-allowed") finish("🔒 마이크 권한을 허용해 주세요. (주소창 왼쪽 자물쇠 → 마이크 허용)");
+        else if (e.error === "no-speech") finish();
+        else if (e.error === "network") finish("🌐 음성 인식에 인터넷 연결이 필요해요.");
+      };
+      recog.onend = () => finish();
+      startRecorder().then(() => {
+        if (ended) return;
+        try { recog.start(); } catch (e) { finish("음성 인식을 시작하지 못했어요. 다시 눌러 주세요."); }
+      });
+      timer = setTimeout(() => { try { recog.stop(); } catch (e) { finish(); } }, 9000);
+      return { stop() { try { recog.stop(); } catch (e) { finish(); } } };
+    }
+    // 음성 인식이 없으면 4초 녹음만
+    startRecorder().then(() => { if (!recorder) finish("마이크를 쓸 수 없어요. Chrome 권장!"); });
+    timer = setTimeout(() => finish(), 4000);
+    return { stop() { finish(); } };
+  }
 
-/* ---------- 빈칸 채우기: My favorite subject is ___. ---------- */
-function renderSubjectFill() {
-  const row = document.getElementById("refuse-chips");
-  row.innerHTML = "";
-  SUBJECTS.forEach(sb => {
-    row.appendChild(makeChip(`${sb.emoji} ${sb.en} · ${sb.ko}`, "act", fillSubject === sb, () => {
-      fillSubject = sb; renderSubjectFill();
-    }));
+  $("#btn-clear").addEventListener("click", () => {
+    if (!confirm("연습 기록을 모두 지울까요?")) return;
+    stats = {}; saveStats();
+    Object.keys(recordings).forEach(k => { URL.revokeObjectURL(recordings[k]); delete recordings[k]; });
+    renderPractice();
   });
-  const blank = document.getElementById("refuse-blank");
-  const koEl = document.getElementById("refuse-ko");
-  const actions = document.getElementById("refuse-actions");
-  if (fillSubject) {
-    const l = subjectLine(fillSubject);
-    setBlank("refuse-blank", fillSubject.en);
-    koEl.textContent = l.ko;
-    fillActions(actions, l.en);
-  } else {
-    setBlank("refuse-blank", null);
-    koEl.textContent = "내가 가장 좋아하는 과목은 ________(이)야.";
-    fillActions(actions, null);
-  }
-}
-
-/* ---------- 빈칸 채우기: I'm good at ___. ---------- */
-function renderGoodFill() {
-  const row = document.getElementById("meet-good-chips");
-  row.innerHTML = "";
-  GOOD_ATS.forEach(g => {
-    row.appendChild(makeChip(`${g.emoji} ${g.en} · ${g.ko}`, "place", fillGood === g, () => {
-      fillGood = g; renderGoodFill();
-    }));
+  $("#btn-play-all").addEventListener("click", () => {
+    const texts = [];
+    QUESTIONS.forEach(q => { const p = plans[q.id]; if (p) texts.push(q.q, answerEn(actById(p.id), p.level)); });
+    if (!texts.length) { alert("아직 계획이 없어요. 활동 카드에서 골라요!"); return; }
+    speakSeq(texts);
   });
-  const koEl = document.getElementById("meet-ko");
-  const actions = document.getElementById("meet-actions");
-  if (fillGood) {
-    const l = goodLine(fillGood);
-    setBlank("meet-good-blank", fillGood.en);
-    koEl.textContent = l.ko;
-    fillActions(actions, l.en);
-  } else {
-    setBlank("meet-good-blank", null);
-    koEl.textContent = "나는 ________을(를) 잘해.";
-    fillActions(actions, null);
-  }
-}
+  $("#btn-print").addEventListener("click", () => window.print());
 
-
-/* ---------- 초기 렌더 ---------- */
-renderSuggestions();
-renderAnswerGrids();
-renderBuilder();
-updateSetPreview();
-renderSheetSummary();
-
-/* ---------- 탭 전환 ---------- */
-document.querySelectorAll(".tab-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
-    btn.classList.add("active");
-    document.getElementById("tab-" + btn.dataset.tab).classList.add("active");
-    synth.cancel();
-    hidePopup();
-    if (btn.dataset.tab === "practice") renderPractice();
-    if (btn.dataset.tab === "build") { lastSetSpoken = ""; renderBuilder(); updateSetPreview(); }
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  });
-});
-
-/* ---------- 속도 조절 ---------- */
-document.getElementById("rate").addEventListener("input", e => {
-  speakRate = parseFloat(e.target.value);
-});
+  /* ----- 시작 ----- */
+  buildCardTab("basic");
+  buildCardTab("mid");
+  renderCardTab("basic");
+  updateBadge();
+})();
