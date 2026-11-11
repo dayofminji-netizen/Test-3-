@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Cache-Control" content="no-cache" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>What's your favorite subject? · 좋아하는 과목과 잘하는 것</title>
+  <link rel="stylesheet" href="https://hangeul.pstatic.net/hangeul_static/css/nanum-square-round.css" />
+  <link rel="stylesheet" href="style.css?v=20261111c" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="balloon balloon1">📚</div>
+    <div class="balloon balloon2">✏️</div>
+    <div class="confetti"></div>
+    <h1>📚 What's your favorite subject?</h1>
+    <p class="subtitle">좋아하는 과목과 잘하는 것 말하기 · 묻고, 대답하고, 나를 소개해 봐요!</p>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="suggest">🗣️ 말해 보기</button>
+    <button class="tab-btn" data-tab="answer">📚 좋아하는 과목</button>
+    <button class="tab-btn" data-tab="meet">⭐ 잘하는 것</button>
+    <button class="tab-btn" data-tab="build">🎒 내 소개 만들기 <span id="set-count" class="tab-count">0/3</span></button>
+    <button class="tab-btn" data-tab="practice">🎤 연습 · 짝 활동</button>
+  </nav>
+
+  <div class="toolbar">
+    <label class="speed-control">말하기 속도
+      <input id="rate" type="range" min="0.6" max="1.1" step="0.05" value="0.85" />
+    </label>
+    <span id="voice-status" class="voice-status"></span>
+  </div>
+
+  <main>
+    <!-- ===== 말해 보기 ===== -->
+    <section id="tab-suggest" class="tab-panel active">
+      <div class="section-block">
+        <h2>과목 · 잘하는 것 말하기 <span class="count">60개</span></h2>
+        <div class="level-switch">
+          <button class="level-btn active" data-level="beginner">초급</button>
+          <button class="level-btn" data-level="intermediate">중급</button>
+          <button class="level-btn" data-level="advanced">고급</button>
+        </div>
+        <div class="cat-switch">
+          <button class="cat-btn active" data-cat="all">전체</button>
+          <button class="cat-btn" data-cat="subject">📚 좋아하는 과목</button>
+          <button class="cat-btn" data-cat="good">⭐ 잘하는 것</button>
+        </div>
+        <p class="hint">난이도와 종류를 고르면 <b>과목 10개</b>(국어·영어·수학·과학·사회·음악·미술·체육·실과·도덕)와 <b>잘하는 것 10개</b>(축구·수영·노래·춤·그림·요리·달리기·피아노·줄넘기·이야기 쓰기) 문장이 나와요. 과목 이름은 <b>the</b> 없이 그대로 말해요! 단어를 누르면 뜻과 발음을 알 수 있어요. <b>📋 워크시트 1번</b>: 여기와 <b>좋아하는 과목 · 잘하는 것</b> 탭에서 듣고 따라 말한 뒤, <b>🎒 내 소개 만들기</b>에서 골라요.</p>
+        <div id="suggestion-grid" class="card-grid five"></div>
+      </div>
+    </section>
+
+    <!-- ===== 좋아하는 과목 ===== -->
+    <section id="tab-answer" class="tab-panel">
+      <p class="hint" style="margin-bottom:18px">💡 친구에게 <b>What's your favorite subject?</b> 라고 물으면, 친구는 <b>My favorite subject is ___.</b> 로 가장 좋아하는 과목을 말해요.</p>
+      <div class="section-block">
+        <h2>❓ 묻기 <span class="count">질문 1개</span></h2>
+        <p class="hint"><b>What's</b>는 <b>What is</b>를 줄인 말이에요. 끝을 내려 읽어요.</p>
+        <div id="accept-grid" class="card-grid five"></div>
+      </div>
+      <div class="section-block">
+        <h2>📚 대답하기 <span class="count">과목 10개</span></h2>
+        <p class="hint">가장 좋아하는 <b>과목</b>을 골라 빈칸을 채워요.</p>
+        <div class="fill-box" id="refuse-fill">
+          <div class="fill-pattern">My favorite subject is <span class="blank" id="refuse-blank">________</span>.</div>
+          <div class="fill-ko" id="refuse-ko">내가 가장 좋아하는 과목은 ________(이)야.</div>
+          <div class="chip-group-title">📚 과목 (Subject)</div>
+          <div id="refuse-chips" class="chip-row wrap"></div>
+          <div class="fill-actions" id="refuse-actions"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 잘하는 것 ===== -->
+    <section id="tab-meet" class="tab-panel">
+      <p class="hint" style="margin-bottom:18px">💡 좋아하는 과목을 말한 뒤, <b>I'm good at ___.</b> 으로 내가 <b>잘하는 것</b>을 말해요. <b>I'm</b>은 <b>I am</b>을 줄인 말이에요.</p>
+      <div class="section-block">
+        <h2>⭐ 잘하는 것 말하기 <span class="count">10개</span></h2>
+        <p class="hint">잘하는 것을 골라 빈칸을 채우면 문장이 완성돼요. 완성된 문장을 들어 보세요.</p>
+        <div class="fill-box" id="meet-fill">
+          <div class="fill-pattern">I'm good at <span class="blank" id="meet-good-blank">________</span>.</div>
+          <div class="fill-ko" id="meet-ko">나는 ________을(를) 잘해.</div>
+          <div class="chip-group-title">⭐ 잘하는 것 (I'm good at ___.)</div>
+          <div id="meet-good-chips" class="chip-row wrap"></div>
+          <div class="fill-actions" id="meet-actions"></div>
+        </div>
+      </div>
+      <div class="section-block">
+        <h2>😎 친구 말에 반응하기 <span class="count">5개</span></h2>
+        <p class="hint">친구가 좋아하는 과목이나 잘하는 것을 말하면 이렇게 반응해 줘요.</p>
+        <div id="reaction-grid" class="card-grid five"></div>
+      </div>
+    </section>
+
+    <!-- ===== 🎒 내 소개 만들기 (3개) ===== -->
+    <section id="tab-build" class="tab-panel">
+      <div class="section-block">
+        <h2>🎒 내 소개 만들기 <span class="count">3개</span></h2>
+        <p class="hint"><b>📋 워크시트 2번</b>: 나를 소개하는 대화 <b>3개</b>를 만들어요. 대화마다 <b>좋아하는 과목 1개</b>와 <b>잘하는 것 1개</b>를 고르면 돼요. 다 만들면 아래 <b>📝 워크시트에 적기</b> 표를 보고 영어로 옮겨 적고, <b>🎤 연습 · 짝 활동</b>에서 말해 봐요.</p>
+
+        <div class="set-tabs" id="set-tabs">
+          <button class="set-tab active" data-set="0">소개 1</button>
+          <button class="set-tab" data-set="1">소개 2</button>
+          <button class="set-tab" data-set="2">소개 3</button>
+        </div>
+
+        <div class="fill-box dialog-box">
+          <div class="br-dialogue">
+            <div class="br-line line-a">
+              <span class="br-who">🙋 친구</span>
+              <div class="br-bubble">
+                <div class="br-sentence" id="set-question">What's your favorite subject?</div>
+                <div class="br-ko">네가 가장 좋아하는 과목은 뭐니?</div>
+              </div>
+              <button class="speak-btn small" id="set-speak-question" aria-label="이 줄 듣기">🔊</button>
+            </div>
+            <div class="br-line line-b">
+              <span class="br-who">😀 나</span>
+              <div class="br-bubble">
+                <div class="br-sentence">My favorite subject is <span class="blank" id="set-subject">________</span>.</div>
+                <div class="br-ko" id="set-subject-ko">내가 가장 좋아하는 과목은 ________(이)야.</div>
+              </div>
+              <button class="speak-btn small" id="set-speak-subject" aria-label="이 줄 듣기">🔊</button>
+            </div>
+            <div class="br-line line-b">
+              <span class="br-who">😀 나</span>
+              <div class="br-bubble">
+                <div class="br-sentence">I'm good at <span class="blank" id="set-good">________</span>.</div>
+                <div class="br-ko" id="set-good-ko">나는 ________을(를) 잘해.</div>
+              </div>
+              <button class="speak-btn small" id="set-speak-good" aria-label="이 줄 듣기">🔊</button>
+            </div>
+            <div class="br-line line-a">
+              <span class="br-who">🙋 친구</span>
+              <div class="br-bubble">
+                <div class="br-sentence" id="set-reaction-line">Cool!</div>
+                <div class="br-ko" id="set-reaction-ko">멋지다!</div>
+              </div>
+              <button class="speak-btn small" id="set-speak-reaction" aria-label="이 줄 듣기">🔊</button>
+            </div>
+          </div>
+          <div class="dlg-status" id="set-status"></div>
+          <div class="fill-actions">
+            <button id="set-listen" class="btn primary" disabled>🔊 대화 듣기</button>
+            <button id="set-random" class="btn ghost">🎲 무작위로 채우기</button>
+            <button id="set-clear" class="btn ghost">🧹 이 소개 비우기</button>
+          </div>
+        </div>
+
+        <div class="build-step">
+          <h3 class="build-label">1️⃣ 좋아하는 과목 고르기 <span class="build-sub">My favorite subject is ___.</span></h3>
+          <div id="build-subjects"></div>
+        </div>
+        <div class="build-step">
+          <h3 class="build-label">2️⃣ 잘하는 것 고르기 <span class="build-sub">I'm good at ___.</span></h3>
+          <div id="build-good" class="chip-row wrap"></div>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <h2>😎 친구의 반응 정하기 <span class="count">1개</span></h2>
+        <p class="hint">대화 마지막에 친구가 해 줄 <b>반응</b>을 골라요. 고른 표현은 <b>위 대화</b>에 바로 나타나요.</p>
+        <div class="build-step">
+          <div id="build-reaction" class="chip-row wrap"></div>
+        </div>
+      </div>
+
+      <div class="section-block">
+        <h2>📝 워크시트에 적기 <span class="count">2번 표</span></h2>
+        <p class="hint">영어 문장을 보고 워크시트에 그대로 옮겨 적어요. 🔊를 누르면 읽어 줘요.</p>
+        <div id="sheet-summary" class="sheet-table"></div>
+      </div>
+    </section>
+
+    <!-- ===== 🎤 연습 · 짝 활동 ===== -->
+    <section id="tab-practice" class="tab-panel">
+      <div class="section-block">
+        <h2>👫 짝 활동 카드 <span class="count">워크시트 3번</span></h2>
+        <p class="hint"><b>📋 워크시트 3번</b>: 짝에게 <b>What's your favorite subject?</b> 라고 물어요. 짝이 대답하면 워크시트에 <b>친구 이름</b>과 <b>좋아하는 과목 · 잘하는 것</b>을 적어요. 이번엔 내가 대답해요!</p>
+        <div id="pair-cards" class="pair-cards"></div>
+      </div>
+      <div class="section-block">
+        <h2>🎤 컴퓨터와 미리 연습하기</h2>
+        <p class="hint">짝 활동 전에 혼자 연습해요. 줄마다 <b>🎙️ 말하기</b>로 정확도를 재고, <b>🎭 역할극</b>에서 내가 <b>A(묻는 사람)</b> 또는 <b>B(대답하는 사람)</b>를 맡으면 컴퓨터가 상대 역할을 읽어 줘요. (Chrome 권장)</p>
+        <p id="practice-empty" class="practice-empty">
+          아직 만든 소개가 없어요! <b>🎒 내 소개 만들기</b> 탭에서 과목과 잘하는 것을 골라 보세요.
+        </p>
+        <div id="practice-list" class="practice-list"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="app-footer">
+    <span class="voice-status">영어 · What's your favorite subject? 📚</span>
+  </footer>
+
+  <script src="data.js?v=20261111c"></script>
+  <script src="app.js?v=20261111c"></script>
+</body>
+</html>
